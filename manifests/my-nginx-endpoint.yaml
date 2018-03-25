@@ -1,0 +1,9 @@
+kind: Endpoints
+apiVersion: v1
+metadata:
+  name: my-nginx
+subsets:
+  - addresses:
+      - ip: 172.17.0.4
+    ports:
+      - port: 80
