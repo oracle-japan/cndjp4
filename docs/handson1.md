@@ -8,7 +8,7 @@ CNDJP #4 ハンズオンチュートリアル Part 1
 
 前提条件
 --------
-このチュートリアルは任意のKubernetesクラスターを利用可能です。connpassのエントリーで予めご案内したもののうち、ご準備いただいたものをご利用ください。
+このチュートリアルはKubernetes 1.7以降の任意のクラスターを利用可能です。connpassのエントリーで予めご案内したもののうち、ご準備いただいたものをご利用ください。
 
 以降の手順は、ほとんどの操作をコマンドラインツールから実行します。Mac/Linuxの場合はターミナル、Windowsの場合はWindows PowerShell利用するものとして、手順を記述します。
 
@@ -339,9 +339,10 @@ replicationcontroller "nginx-ingress-controller" created
 
 
 
+
 以上で、ハンズオンのPart1は終了です。
 
-
+Part2へのリンク
 
 
 

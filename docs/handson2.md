@@ -1,24 +1,104 @@
-handson part2
--------------
-Istioのバイナリのダウンロード
+CNDJP #4 ハンズオンチュートリアル Part 2
+========================================
 
-Mac/Linux
+これは、cndjp第4回勉強会のハンズオン Part 2のチュートリアルです。
 
-    > curl -L https://git.io/getLatestIstio | sh -
-    > unzip 
+このチュートリアルでは、Kubernetesクラスターにサービスメッシュ"Istio"をインストールしします。更に、サンプルアプリケーションを使って、アプリに送られるトラフィックの流量を制御するところまでを試してみます。
 
-Windows
 
-    > [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    > Invoke-WebRequest -Uri https://github.com/istio/istio/releases/download/0.6.0/istio_0.6.0_win.zip -OutFile istio_0.6.0_win.zip
-    > Expand-Archive -Path .\istio_0.6.0_win.zip
+前提条件
+--------
+このチュートリアルは任意のKubernetes 1.7以降の任意のクラスターを利用可能ですが、Role Based Access Controll(RBAC)が有効になっている必要があります。
+connpassのエントリーで予めご案内したもののうち、ご準備いただいたものをご利用いただきますが、「0. 準備作業」でご案内したRBACの有効化手順を必ず実施してください。
 
-PATHを通す
+以降の手順は、ほとんどの操作をコマンドラインツールから実行します。Mac/Linuxの場合はターミナル、Windowsの場合はWindows PowerShell利用するものとして、手順を記述します。
+
+
+0 . 準備作業
+------------
+（Part1の準備作業を実施済みの場合、「1. Istioのインストール」に進んでください）
+
+### 0-1. Kubernetesクラスターの起動
+Part2では、KubernetesクラスターのRole Based Access Controll(RBAC)が有効になっている必要があります。以下の通り、環境に合わせた方法で起動してください。
+
+##### [cndjp第1回勉強会のハンズオンチュートリアル](https://github.com/oracle-japan/cndjp1/blob/master/handson/handson1.md)を利用して構築した場合
+``vagrant up``を実行する際に、AUTHORIZATION\_MODE=RBACオプションを指定して、RBACを有効にします。
+
+    > AUTHORIZATION_MODE=RBAC vagrant up
+
+##### minikubeを利用する場合
+特別な設定は不要です。通常の手順でminikubeを起動してください。
+
+    > minikube start
+
+### 0-2. Kubernetesクラスターへのアクセスの確認
+クラスターを起動したら、以下のコマンドを実行してクラスターへの疎通を確認します。
+
+##### クラスター情報の取得
+
+    > kubectl cluster-info
+    Kubernetes master is running at https://172.17.8.101
+    KubeDNS is running at https://172.17.8.101/api/v1/namespaces/kube-system/services/kube-dns/proxy
+
+    To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
+
+##### ノードの一覧の取得
+
+    > kubectl get nodes
+    NAME           STATUS                     AGE       VERSION
+    172.17.8.101   Ready,SchedulingDisabled   12h       v1.7.11
+    172.17.8.102   Ready                      12h       v1.7.11
+    172.17.8.103   Ready                      12h       v1.7.11
+
+表示されるノード数は、環境によって異なります。例えば、minkubeの場合は1ノードのみ表示されます。
+
+### 0-3. チュートリアルのファイル一式を取得する
+利用するファイル一式が、このチュートリアルをホストするリポジトリに保存されています。これを適当なディレクトリにcloneして下さい。
+
+以下は、コマンドラインツールのgitを使う例です。
+
+    > git clone https://github.com/oracle-japan/cndjp4.git
+
+
+1 . Istioのインストール
+-----------------------
+
+### 1-1. Istioのダウンロードとistioctlのセットアップ
+Istioの最新版をダウンロードします。
+
+Isitoは、Kubernetesにデプロイするためのmanifest、コマンドラインツール(istioctl)、サンプルアプリ等の一式をzipアーカイブにまとめたものとして配布されています。<br>
+このチュートリアルの作成時点（2018/03/26）では、0.6.0が最新バージョンです。
+
+まず、カレントディレクトリを``cndjp4/istio-bootcamp``に変更しておきます。
+
+    $ cd cndjp4/istio-bootcamp
+
+続いて、Istioをダウンロードします。Mac/Linuxの場合は、最新バージョンを取得するためのスクリプトツールを利用することができます。
+
+##### Mac/Linux
+
+    $ curl -L https://git.io/getLatestIstio | sh -
+
+##### Windows
+
+    $ [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $ Invoke-WebRequest -Uri https://github.com/istio/istio/releases/download/0.6.0/istio_0.6.0_win.zip -OutFile istio_0.6.0_win.zip
+    $ Expand-Archive -Path .\istio_0.6.0_win.zip
+
+Istioのコマンドラインツール(istioctl)は、ダウンロードしてできたディレクトリ配下の``istio-0.6/bin``に配置されています。各プラットフォームに合わせて、istioctlをPATHに追加してください。
     
-    > cd istio-0.6
-    > export PATH=$PWD/bin:$PATH
+##### Mac/Linux
 
-    > istioctl version
+    $ export PATH=$PWD/istio-0.6/bin:$PATH
+
+##### Windows
+
+[コンピューターのプロパティ] > [システムの詳細設定]から、istioctlがあるフォルダをPATHに追加します。
+具体的な手順は、[こちら](http://hogepy.blog.fc2.com/blog-entry-107.html)を参考にしてください。
+
+istioctlのバージョン情報を表示して、istioctlが使えることを確認します。``istioctl version``を実行して、以下のような結果となることを確認してください。
+
+    $ istioctl version
     Version: 0.6.0
     GitRevision: 2cb09cdf040a8573330a127947b11e5082619895
     User: root@a28f609ab931
@@ -26,29 +106,32 @@ PATHを通す
     GolangVersion: go1.9
     BuildStatus: Clean
 
-クラスターを起動
+### 1-2. IstioをKubernetesクラスターにインストールする
+IstioをKubernetesクラスターにインストールします。必要なものは全てKubernetesのmanifestとして記述されているため、これをデプロイするだけでOKです。
 
-Mac/Linux
-    > AUTHORIZATION_MODE=RBAC vagrant up
+（以下のコマンドは、カレント・ディレクトリが``cndjp4/istio-bootcamp``であるものとします）
 
-Windows
+##### Mac/Linux
 
-    > set-item env:AUTHORIZATION_MODE -value RBAC
-    > vagrant up
+    $ cd ./istio-0.6.0/
+    $ kubectl apply -f ./install/kubernetes/istio.yaml
 
-インストール
-
+##### Windows
+    
     $ cd ./istio_0.6.0_win/istio-0.6.0/
+    $ kubectl apply -f ./install/kubernetes/istio.yaml
 
-    > kubectl apply -f install/kubernetes/istio.yaml
+istio-systemというNamespace配下に必要な構成要素が配備されます。ServiceとPodにどのようなオブジェクトが配備されるか、確認してみてください。
 
-確認
+・Service
 
-    > kubectl get svc -n istio-system
+    > kubectl get services -n istio-system
     NAME            TYPE           CLUSTER-IP       EXTERNAL-IP   PORT(S)                                                            AGE
     istio-ingress   LoadBalancer   10.100.151.26    <pending>     80:31826/TCP,443:31716/TCP                                         1m
     istio-mixer     ClusterIP      10.100.149.13    <none>        9091/TCP,15004/TCP,9093/TCP,9094/TCP,9102/TCP,9125/UDP,42422/TCP   1m
     istio-pilot     ClusterIP      10.100.118.141   <none>        15003/TCP,8080/TCP,9093/TCP,443/TCP                                1m
+
+・Pod
 
     > kubectl get pods -n istio-system
     NAME                             READY     STATUS    RESTARTS   AGE
@@ -57,9 +140,12 @@ Windows
     istio-mixer-3303323913-s8c2l     3/3       Running   0          2m
     istio-pilot-3625647026-0rv6z     2/2       Running   0          2m
 
+上のように、全てのPodのSTATUSがRunningになればインストール完了です（およそ1-2分ほどかかります）。
 
 
----
+2 . サンプルアプリケーションを配備する
+--------------------------------------
+
 
 ### Namespaceを作成する
 最初に、Part2の作業を通して利用するNamespaceとして"istio-bootcamp"を作成しておきます。
@@ -143,53 +229,7 @@ curlを実行
     $ istioctl create -n istio-bootcamp -f ./bootcamp-route-rule-all-v2.yaml
 
 
+たくさんサンプルがあることを書いておく
 
----
-Bookinfoアプリケーションのインストール
 
-namespaceの作成とistio-injectionを有効化
-
-    > kubectl create namespace bookinfo
-    > kubectl label namespace bookinfo istio-injection=enabled
-
-Mac/Linux
-
-    > kubectl config set-context $(kubectl config current-context) --namespace=bootcamp
-
-Windows
-    > kubectl config current-context
-    default-cluster
-    > kubectl config set-context default-cluster --namespace=bootcamp
-    Context "default-cluster" modified.
-
-bookinfoをインストール
-
-    > kubectl apply -f samples/bookinfo/kube/bookinfo.yaml
-    service "details" created
-    deployment "details-v1" created
-    service "ratings" created
-    deployment "ratings-v1" created
-    service "reviews" created
-    deployment "reviews-v1" created
-    deployment "reviews-v2" created
-    deployment "reviews-v3" created
-    service "productpage" created
-    deployment "productpage-v1" created
-    ingress "gateway" created
-
-    > kubectl get services
-    NAME          TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE
-    details       ClusterIP   10.100.36.203    <none>        9080/TCP   43s
-    kubernetes    ClusterIP   10.100.0.1       <none>        443/TCP    1h
-    productpage   ClusterIP   10.100.125.154   <none>        9080/TCP   40s
-    ratings       ClusterIP   10.100.76.84     <none>        9080/TCP   43s
-    reviews       ClusterIP   10.100.64.118    <none>        9080/TCP   42s
-
-    > kubectl get pods
-    details-v1-4276665575-bxhvj       1/1       Running   0          3m
-    productpage-v1-1223458169-z9sz8   1/1       Running   0          3m
-    ratings-v1-1635894359-ltzvr       1/1       Running   0          3m
-    reviews-v1-2901386904-dgdkd       1/1       Running   0          3m
-    reviews-v2-3191357612-70tl0       1/1       Running   0          3m
-    reviews-v3-1009570596-pt69z       1/1       Running   0          3m
 
