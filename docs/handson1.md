@@ -83,10 +83,16 @@ kubectlのデフォルトnamespaceを"k8snet"に変更しておきます。
 
 
 ### 最初のPodのデプロイ
-nginxを可動させる、簡単なサンプルPodをKubernetesにデプロイしてみます。
+まずは、nginxを可動させる、簡単なサンプルPodをKubernetesにデプロイしてみます。
 といってもPodを直接デプロイするわけではなく、Deploymentオブジェクトを作成した上で、それを経由して複数のPodをデプロイします。
 
-    $ kubectl create -f ./my-nginx.yaml
+最初に``cndjp4/k8snet``をカレントディレクトリにしておきます。
+
+    $ cd ./cndjp4/k8snet
+
+続いてDeploymentオブジェクト作成します。
+
+    $ kubectl create -f ./manifests/my-nginx.yaml
     deployment "my-nginx" created
 
 今回の例では、2つのサンプルPodを可動させていますので、Podの一覧を取得すると以下のような結果となります。
@@ -161,41 +167,53 @@ nginxを可動させる、簡単なサンプルPodをKubernetesにデプロイ�
 ここでは、Serviceオブジェクトを経由してPodにアクセスする、Service Networkの挙動を確認してみます。
 
 ### Serviceオブジェクトの作成
+以下のコマンドでServiceオブジェクトを作成します。
 
-
-    $ kubectl create -f ./my-nginx-service.yaml
+    $ kubectl create -f ./manifests/my-nginx-service.yaml
     service "my-nginx" created
 
-    $ kubectl get svc
-    NAME         TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
-    my-nginx     ClusterIP   10.102.34.153   <none>        80/TCP    7s
+Serviceの一覧を取得すると以下のような結果となります。ここはClusterIPタイプのService（クラスター外部に公開されない）を作っているため、EXTERNAL-IPは\<none\>となっています。
 
-    $ kubectl describe svc my-nginx
+    $ kubectl get services
+    NAME         TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+    my-nginx     ClusterIP   10.104.246.87  <none>        80/TCP    7s
+
+後の手順でServiceへのアクセスを思考するため、CLUSTER-IPの値をテキストエディタ等にコピーしておいてください。
+
+Serviceの詳細情報を表示してみます。今回利用するサンプルPodには``run=my-nginx``というLabelが設定されています。このPodにルーティングするため、ServiceではLabelSelectorに同じく``run=my-nginx``を指定しています。
+
+    $ kubectl describe services my-nginx
     Name:              my-nginx
-    Namespace:         default
+    Namespace:         k8snet
     Labels:            run=my-nginx
     Annotations:       <none>
     Selector:          run=my-nginx
     Type:              ClusterIP
-    IP:                10.102.34.153
+    IP:                10.104.246.87
     Port:              <unset>  80/TCP
     TargetPort:        80/TCP
-    Endpoints:         172.17.0.4:80
+    Endpoints:         <none>
     Session Affinity:  None
     Events:            <none>
 
+Label/LabelSelectorによってServiceからのルーティング対象の紐づけができていますので、合わせてEndpointsオブジェクトも作成されています。<br>
+Endpointの一覧と詳細情報も表示してみましょう。ルーティング対象のPodが2つあるため、ENDPOINTSには各々アドレスが表示されます。
+
+##### 一覧
+
     $ kubectl get endpoints
-    NAME         ENDPOINTS        AGE
-    kubernetes   10.0.2.15:8443   24m
-    my-nginx     172.17.0.4:80    1m
+    NAME       ENDPOINTS                     AGE
+    my-nginx   172.17.0.4:80,172.17.0.5:80   1m
+
+##### 詳細情報
 
     $ kubectl describe endpoints my-nginx
     Name:         my-nginx
-    Namespace:    default
+    Namespace:    k8snet
     Labels:       run=my-nginx
     Annotations:  <none>
     Subsets:
-      Addresses:          172.17.0.4
+      Addresses:          172.17.0.4,172.17.0.5
       NotReadyAddresses:  <none>
       Ports:
         Name     Port  Protocol
@@ -203,11 +221,14 @@ nginxを可動させる、簡単なサンプルPodをKubernetesにデプロイ�
         <unset>  80    TCP
 
     Events:  <none>
-    
-    [ root@{inspector}:/ ]$ curl 127.17.0.4
-    curl: (7) Failed to connect to 127.17.0.4 port 80: Connection refused
 
-    [ root@{inspector}:/ ]$ curl 10.102.34.153
+クラスター内からの通信も試してみます。前述と同様、inspectorのPodを立ち上げてターミナルに入ります。
+
+    $ kubectl run inspector --image=radial/busyboxplus:curl -i --tty --rm
+
+curlでServiceのIPアドレスに対してリクエストを送信することで、nginxにアクセスできていることがわかります（下のコマンドで、IPアドレスには先にメモしたServiceのものを指定してください）。
+
+    [ root@{inspector}:/ ]$ curl 10.104.246.87
     <!DOCTYPE html>
     <html>
     <head>
@@ -234,18 +255,31 @@ nginxを可動させる、簡単なサンプルPodをKubernetesにデプロイ�
     </body>
     </html>
 
-    [ root@{inspector}:/ ]$ nslookup 10.102.34.153
+最後に、nslookupで名前解決ができるかどうかを確認してみます（下のコマンドで、IPアドレスには先にメモしたServiceのものを指定してください）。
+
+    [ root@{inspector}:/ ]$ nslookup 10.104.246.87
     Server:    10.96.0.10
     Address 1: 10.96.0.10 kube-dns.kube-system.svc.cluster.local
 
-    Name:      10.102.34.153
-    Address 1: 10.102.34.153 my-nginx.default.svc.cluster.local
+    Name:      10.104.246.87
+    Address 1: 10.104.246.87 my-nginx.k8snet.svc.cluster.local
 
-    [ root@{inspector}:/ ]$ curl http://my-nginx.default.svc.cluster.local/
-    
-    [ root@{inspector}:/ ]$ nslookup my-nginx.default.svc.cluster.local
-    [ root@{inspector}:/ ]$ nslookup my-nginx.default
-    [ root@{inspector}:/ ]$ nslookup my-nginx
+nslookupの結果ServiceのFQDNが解決できています。この前のステップではIPアドレスを直接指定してcurlを実行しましたが、改めてFQDNでアクセスしてみます。
+FQDNを使って、Service経由でPodにアクセスできていることがわかります。
+
+    [ root@{inspector}:/ ]$ curl my-nginx.k8snet.svc.cluster.local
+
+FQDNの"svc.cluster.local"の部分は、ServiceオブジェクトのFQDNの場合固定の文字列となり、これは省略することができます。
+
+    [ root@{inspector}:/ ]$ nslookup my-nginx.k8snet
+
+"k8snet"の部分は、対象のServiceが属するNamespace名が設定されます。同じNamespaceに属するPod同士であれば、この部分も省略することができます。inspectorのPodは同じ"k8snet"内にデプロイされていますので、以下のコマンドでもServiceへのアクセスが可能です。
+
+    [ root@{inspector}:/ ]$ curl my-nginx
+
+最後に、``exit``コマンドでIinspectorのターミナルを抜けておきます。
+
+    [ root@{inspector}:/ ]$ exit
 
 
 3 . Service Network - (2)
