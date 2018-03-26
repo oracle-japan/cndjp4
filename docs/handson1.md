@@ -277,42 +277,61 @@ FQDNの"svc.cluster.local"の部分は、ServiceオブジェクトのFQDNの場�
 
     [ root@{inspector}:/ ]$ curl my-nginx
 
-最後に、``exit``コマンドでIinspectorのターミナルを抜けておきます。
+最後に、``exit``コマンドでinspectorのターミナルを抜けておきます。
 
     [ root@{inspector}:/ ]$ exit
 
 
 3 . Service Network - (2)
 -------------------------
+ここでは、Headless Serviceオブジェクトを作って挙動を確認してみます。<br>
+Headless Serviceを使うと、ServiceではなくPodのIPアドレスに対して直接FQDNが設定されます。
 
-### Headless Serviceを使ったPodへのアクセス
+### Serviceオブジェクトの作成
+Headless ServiceはClusterIPに"None"を指定したSerivceオブジェクトです。Kubernetesにデプロイする前に、manifestファイルの内容を確認してみてください。
 
-    $ kubectl create -f ./my-nginx-service-headless.yml
+    > cat ./manifests/my-nginx-service-headless.yaml
+
+以下のコマンドでHeadless Serviceオブジェクトを作成します。
+
+    $ kubectl create -f ./manifests/my-nginx-service-headless.yml
     service "my-nginx-headless" created
 
+ServiceとEndpointsの一覧を取得すると、Headless ServiceにはClusterIPが割り当てられていないことがわかります。
+
+##### Service一覧
+
     $ kubectl get services
-    NAME                TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
-    kubernetes          ClusterIP   10.96.0.1    <none>        443/TCP   1h
-    my-nginx-headless   ClusterIP   None         <none>        80/TCP    18s
+    NAME                TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+    my-nginx            ClusterIP   10.104.246.87  <none>        80/TCP    9m
+    my-nginx-headless   ClusterIP   None           <none>        80/TCP    18s
+
+##### Endpoints一覧
 
     $ kubectl get endpoints
-    NAME                ENDPOINTS        AGE
-    kubernetes          10.0.2.15:8443   1h
-    my-nginx-headless   172.17.0.4:80    6s
+    NAME                ENDPOINTS                     AGE
+    my-nginx            172.17.0.4:80,172.17.0.5:80   23s
+    my-nginx-headless   172.17.0.4:80,172.17.0.5:80   16s
+
+inspectorを利用してnslookupしてみます。ここではClusterIPではなく（そもそも割り当てられていない）、Serviceに設定されるFQDNのルールに従って、名前を指定してみます。
 
     $ kubectl run inspector --image=radial/busyboxplus:curl -i --tty --rm
-
     [ root@{inspector}:/ ]$ nslookup my-nginx-headless
     Server:    10.96.0.10
     Address 1: 10.96.0.10 kube-dns.kube-system.svc.cluster.local
 
     Name:      my-nginx-headless
     Address 1: 172.17.0.4
+    Address 2: 172.17.0.5
 
-    [ root@{inspector}:/ ]$ nslookup my-nginx-headless.default
+PodのIPアドレスに対して、名前が割り当てられいることがわかります。<br>
+同じように、curlでPodにアクセスすることも可能です。
 
-  (curlは文章で) 
+    [ root@{inspector}:/ ]$ curl my-nginx-headless
 
+``exit``コマンドでinspectorのターミナルを抜けておきます。また、Headless Serviceは以降の手順では使わないので、削除しておきます。
+
+    [ root@{inspector}:/ ]$ exit
     $ kubectl delete -f ./my-nginx-service-headless.yaml
 
 
