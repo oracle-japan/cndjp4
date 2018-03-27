@@ -178,16 +178,23 @@ kubectlのデフォルトnamespaceを"istio-bootcamp"に変更しておきます
 続いて、bootcampアプリケーションをデプロイします。
 
     $ kubectl create -f ./manifests/bootcamp.yaml
+    deployment "bootcamp-v1" created
+    deployment "bootcamp-v2" created
 
 version 1のPodが2つ、varsion 2のPodが1つデプロイされていることを確認してください。
 
     $ kubectl get pods
+    NAME                           READY     STATUS    RESTARTS   AGE
+    bootcamp-v1-68cb78f87c-l8szm   1/1       Running   0          42s
+    bootcamp-v1-68cb78f87c-zlmqh   1/1       Running   0          42s
+    bootcamp-v2-569574d79f-w4p6g   1/1       Running   0          41s
 
 次に、アプリケーションにクラスター外からアクセスするためのService、およびIngressオブジェクトを作成します。ここでは、Ingress CotrollerとしてIstioに付属のIstio Ingress Cotrollerを利用します。
 
     $ kubectl create -f ./manifests/bootcamp-service.yaml
-
+    service "bootcamp" created
     $ kubectl create -f ./manifests/bootcamp-ingress.yaml
+    ingress "bootcamp" created
 
 ### 2.3. bootcampアプリケーションへのアクセスの確認
 Ingress Controllerが配備されているNodeと公開されているPort番号を取得して、アプリケーションにアクセスするためのURLを取得します。
@@ -221,43 +228,265 @@ Ingress Controllerが配備されているNodeと公開されているPort番号
 
 3 . Istioによるトラフィックの制御を行う
 ---------------------------------------
+それでは、Istioを使ったトラフィック量の制御を実際に行ってみます。
 
-### 3.1. Envoyを注入したPodに置き換える
+### 3.1. bootcampアプリケーションのPodをEnvoyを注入したものに置き換える
+ここまでの手順でデプロイしたアプリケーションは、Kubernetesの通常の方法でデプロイしているため、PodにEnvoyプロキシを含んでいません。まずは、これをEnvoyを含むものに置き換えます。
 
-    $ kubectl delete -f ./bootcamp.yaml
+以下のコマンドで、一度bootcampアプリケーションを削除します。
 
-    $ istioctl kube-inject --debug -f ./bootcamp.yaml -o ./bootcamp-istio.yaml
+    $ kubectl delete -f ./manifests/bootcamp.yaml
 
-    $ kubectl create -f ./bootcamp-istio.yaml
+次に、istioctlを使って、bootcampアプリケーションのmanifestファイルにEnvoyの記述を追加します。
 
-    $ kubectl describe deployments bootcamp-v1
+    $ istioctl kube-inject --debug -f ./manifests/bootcamp.yaml -o ./manifests/bootcamp-istio.yaml
 
-<!--
-    $ kubectl create -f ./manifests/bootcamp/bootcamp-service.yaml
-    $ kubectl create -f ./manifests/bootcamp/bootcamp-ingress.yaml
--->
+新たに作成されたmanifestファイルの内容を参照してみます。
+    
+    $ cat ./manifests/bootcamp-istio.yaml
 
-    $ istioctl create -n istio-bootcamp -f ./bootcamp-route-rule-all-v1.yaml
+以下は、v1のbootcampアプリケーションのDeployment部分を抜粋したものです。
 
-<!--
-    $ istioctl replace -f ./manifests/bootcamp/bootcamp-route-rule-50-v2.yaml
--->
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  name: bootcamp-v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bootcamp
+  strategy: {}
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/status: '{"version":"3710def1fd6b417282ccad9d233d1d103bf78de57c31d10d2d7f3555934a4629","initContainers":["istio-init","enable-core-dump"],"containers":["istio-proxy"],"volumes":["istio-envoy","istio-certs"]}'
+      creationTimestamp: null
+      labels:
+        app: bootcamp
+        version: v1
+    spec:
+      containers:
+      - image: docker.io/jocatalin/kubernetes-bootcamp:v1
+        name: bootcamp
+        ports:
+        - containerPort: 8080
+        resources: {}
+      - args:
+        - proxy
+        - sidecar
+        - --configPath
+        - /etc/istio/proxy
+        - --binaryPath
+        - /usr/local/bin/envoy
+        - --serviceCluster
+        - bootcamp
+        - --drainDuration
+        - 45s
+        - --parentShutdownDuration
+        - 1m0s
+        - --discoveryAddress
+        - istio-pilot.istio-system:15003
+        - --discoveryRefreshDelay
+        - 1s
+        - --zipkinAddress
+        - zipkin.istio-system:9411
+        - --connectTimeout
+        - 10s
+        - --statsdUdpAddress
+        - istio-mixer.istio-system:9125
+        - --proxyAdminPort
+        - "15000"
+        - --controlPlaneAuthPolicy
+        - NONE
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: INSTANCE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        image: docker.io/istio/proxy_debug:0.6.0
+        imagePullPolicy: IfNotPresent
+        name: istio-proxy
+        resources: {}
+        securityContext:
+          privileged: true
+          readOnlyRootFilesystem: false
+          runAsUser: 1337
+        volumeMounts:
+        - mountPath: /etc/istio/proxy
+          name: istio-envoy
+        - mountPath: /etc/certs/
+          name: istio-certs
+          readOnly: true
+      initContainers:
+      - args:
+        - -p
+        - "15001"
+        - -u
+        - "1337"
+        image: docker.io/istio/proxy_init:0.6.0
+        imagePullPolicy: IfNotPresent
+        name: istio-init
+        resources: {}
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+          privileged: true
+      - args:
+        - -c
+        - sysctl -w kernel.core_pattern=/etc/istio/proxy/core.%e.%p.%t && ulimit -c
+          unlimited
+        command:
+        - /bin/sh
+        image: alpine
+        imagePullPolicy: IfNotPresent
+        name: enable-core-dump
+        resources: {}
+        securityContext:
+          privileged: true
+      volumes:
+      - emptyDir:
+          medium: Memory
+        name: istio-envoy
+      - name: istio-certs
+        secret:
+          optional: true
+          secretName: istio.default
+status: {}
+```
+いくつかポイントを上げると、以下の3点があります。
 
-参考）
-    https://github.com/istio/istio/issues/4215
+- Envoyプロキシが利用するための環境変数がPodに追加されている
+- istio-init, enable-core-dumpという名前のinitContainerが追加されている
+- istio-proxyという名前のコンテナが追加されている
 
-    $ istioctl delete -n istio-bootcamp -f ./bootcamp-route-rule-all-v1.yaml
-    $ istioctl create -n istio-bootcamp -f ./bootcamp-route-rule-50-v2.yaml
+initContainerは、Podのデプロイ時に前処理を行うために利用するコンテナです（これはKubernetesの機能です）。
 
+それでは、このmanifestを使って、bootcampアプリケーションをデプロイします。
+
+    $ kubectl create -f ./manifests/bootcamp-istio.yaml
+    deployment "bootcamp-v1" created
+    deployment "bootcamp-v2" created
+    
+
+### 3.2. トラフィックの流量制御を行う
+それでは、実際にトラフィックの流量制御を行います。
+
+まずは、全てのトラフィックをv1に振り分けてみます。トラフィックのルールはIstio用のmanifestファイルとして記述することができます。実際のmanifestファイルの内容は以下のようになっています。
+
+    $ cat ./manifests/bootcamp-route-rule-all-v1.yaml
+
+```yaml
+apiVersion: config.istio.io/v1alpha2
+kind: RouteRule
+metadata:
+  name: bootcamp-default
+spec:
+  destination:
+    name: bootcamp
+  precedence: 1
+  route:
+  - labels:
+      version: v1
+    weight: 100
+```
+
+``{.spec.route}``に具体的なルーティングのルールを記述しています。この場合、"bootcamp"というServiceがルーティング対象とするPodで、"version:v1"というlabelが設定されているものに、全てのトラフィックを送るようにしています。
+
+このルールを適用するには、以下のコマンドを実行します。
+
+    $ istioctl create -n istio-bootcamp -f ./manifests/bootcamp-route-rule-all-v1.yaml
+    Created config route-rule/istio-bootcamp/bootcamp-default at revision 1760
+
+改めて、アプリケーションにリクエストを送信します。繰り返し実行してみて、全ての応答がv1から返却されることを確認してください。
+
+##### Linux/Mac
 
     $ curl http://$GATEWAY_URL/bootcamp
+
+##### Windows
+
     $ Invoke-RestMethod -Uri "http://${GATEWAY_URL}/bootcamp"
 
-    $ istioctl delete -n istio-bootcamp -f ./bootcamp-route-rule-50-v2.yaml
-    $ istioctl create -n istio-bootcamp -f ./bootcamp-route-rule-all-v2.yaml
+次に、v1,v2にトラフィックを均等に送るようにルールを変更します。
+まずは、新たにデプロイするルールのmanifestファイルを参照してみます。
+
+    $ cat ./manifests/bootcamp-route-rule-50-v2.yaml
+
+```yaml
+apiVersion: config.istio.io/v1alpha2
+kind: RouteRule
+metadata:
+  name: bootcamp-default
+spec:
+  destination:
+    name: bootcamp
+  precedence: 1
+  route:
+  - labels:
+      version: v1
+    weight: 50
+  - labels:
+      version: v2
+    weight: 50
+```
+
+このmanifestでは、v1,v2それぞれに"weight: 50"を記述することで、それぞれのバージョンに均等にトラフィックが送信されるようにしています。
+
+それでは、このルールをデプロイします（既存のルールを削除した上で、新しいルールをデプロイします）。
+
+    $ istioctl delete -n istio-bootcamp -f ./manifests/bootcamp-route-rule-all-v1.yaml
+    Deleted config: route-rule/istio-bootcamp/bootcamp-default
+    $ istioctl create -n istio-bootcamp -f ./manifests/bootcamp-route-rule-50-v2.yaml
+    Created config route-rule/istio-bootcamp/bootcamp-default at revision 1835
+
+__参考）__<br>
+本来であれば、以下のような``istioctl replace``コマンドをを使ってルールの置き換えを行えるはずです。
+
+    $ istioctl replace -f ./manifests/bootcamp/bootcamp-route-rule-50-v2.yaml
+
+しかしながら、今回利用しているバージョンのIstioには、[これが動作しない不具合](https://github.com/istio/istio/issues/4215)があるようです。
+
+再度リクエストの送信を繰り返して、v1とv2からの応答がおおよそ同じ割合で返ってくることを確認してください。
+
+最後に、v2に全てのトラフィックをルーティングするように、ルールを変更します。
+
+    $ istioctl delete -n istio-bootcamp -f ./manifests/bootcamp-route-rule-50-v2.yaml
+    Deleted config: route-rule/istio-bootcamp/bootcamp-default
+    $ istioctl create -n istio-bootcamp -f ./manifests/bootcamp-route-rule-all-v2.yaml
+    Created config route-rule/istio-bootcamp/bootcamp-default at revision 2145
+
+今度は、応答が全てv2からのものになっていることを確認してください。
 
 
-たくさんサンプルがあることを書いておく
+4 . クリーンアップ
+------------------
+お疲れ様でした。以上でハンズオンのPart2は終了です。
+
+これまで作ってきたオブジェクトをクリーンアップしたい場合は、以下のコマンドを実行して、作成したオブジェクトを削除してください。
+
+    $ istioctl delete -f ./manifests/bootcamp-route-rule-all-v2.yaml
+    $ kubectl delete namespace istio-bootcamp
 
 
+5 . Istioの公式チュートリアルのご紹介
+-------------------------------------
+Isitoの公式ドキュメントには、bookinfoというもう少し本格的なアプリケーションを利用して、Isitoの様々な機能を試すことができるチュートリアルが用意されています。ご興味ある方はぜひ触ってみてください。
 
+- [トラフィックの管理](https://istio.io/docs/tasks/traffic-management/)
+- [ポリシーの適用](https://istio.io/docs/tasks/policy-enforcement/)
+- [メトリック、ログ、トレース情報の収集](https://istio.io/docs/tasks/telemetry/)
+- [セキュリティ](https://istio.io/docs/tasks/security/)
+
+以上。
