@@ -222,6 +222,8 @@ Endpointの一覧と詳細情報も表示してみましょう。ルーティン
 
     Events:  <none>
 
+### Serviceへのアクセスの確認
+
 クラスター内からの通信も試してみます。前述と同様、inspectorのPodを立ち上げてターミナルに入ります。
 
     $ kubectl run inspector --image=radial/busyboxplus:curl -i --tty --rm
@@ -313,6 +315,7 @@ ServiceとEndpointsの一覧を取得すると、Headless ServiceにはClusterIP
     my-nginx            172.17.0.4:80,172.17.0.5:80   23s
     my-nginx-headless   172.17.0.4:80,172.17.0.5:80   16s
 
+### Serviceへのアクセスの確認
 inspectorを利用してnslookupしてみます。ここではClusterIPではなく（そもそも割り当てられていない）、Serviceに設定されるFQDNのルールに従って、名前を指定してみます。
 
     $ kubectl run inspector --image=radial/busyboxplus:curl -i --tty --rm
@@ -329,90 +332,158 @@ PodのIPアドレスに対して、名前が割り当てられいることがわ
 
     [ root@{inspector}:/ ]$ curl my-nginx-headless
 
-``exit``コマンドでinspectorのターミナルを抜けておきます。また、Headless Serviceは以降の手順では使わないので、削除しておきます。
+最後に、``exit``コマンドでinspectorのターミナルを抜けておきます。
+<!--また、Headless Serviceは以降の手順では使わないので、削除しておきます。-->
 
     [ root@{inspector}:/ ]$ exit
-    $ kubectl delete -f ./my-nginx-service-headless.yaml
+<!--    $ kubectl delete -f ./my-nginx-service-headless.yaml-->
 
 
-4 . クラスター外への公開
-------------------------
+4 . クラスター外への公開 - (1)
+------------------------------
+ここでは、クラスター外からのアクセスを受け入れるようにKubenetes Objectを構成してみます。
 
-### NodePort
+Kubernetesにはいくつかの公開方法がありますが、ローカルのクラスターでも利用可能なもののうち、ここではServiceのNodePortタイプを試します。<br>
+ServiceのNodePortタイプを利用すると、Kubernetesを可動させているNodeの、特定のPortを公開します。公開されたPortにアクセスすると、当該Serviceを通してルーティング対象のPodにリクエストが到達します。
 
-    $ kubectl create -f .\my-nginx-service-nodePort.yaml                      
-    service "my-nginx" created                                                 
+### Serviceオブジェクトの作成
 
-    $ kubectl get svc                                                         
-    NAME         TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)          AGE  
-    kubernetes   ClusterIP   10.96.0.1     <none>        443/TCP          1h   
-    my-nginx     NodePort    10.98.22.75   <none>        8080:32461/TCP   12s  
+ServiceオブジェクトでNodePortタイプを指定するには、``{.spec.type}``に"NopePort"を記述します。Kubernetesにデプロイする前に、manifestファイルの内容を確認してみてください。
+
+    $ cat ./manifests/my-nginx-service-nodePort.yaml
+
+以下のコマンドでNodePortタイプのServiceオブジェクトを作成します。
+
+    $ kubectl create -f ./manifests/my-nginx-service-nodePort.yaml｀：ｗ
+    service "my-nginx-nodeport" created                                                 
+Serviceの一覧を表示してみます。
+
+    $ kubectl get services
+    NAME                TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+    my-nginx            ClusterIP   10.104.246.87    <none>        80/TCP           44s
+    my-nginx-headless   ClusterIP   None             <none>        80/TCP           34s
+    my-nginx-nodeport   NodePort    10.111.120.119   <none>        8080:30774/TCP   24s
+
+my-nginx-nodeportを見ると、PORTに"8080:30774/TCP"とあります（30774の部分はランダムに選択されるため、異なる値になっている可能性があります）。これは、Nodeの30774ポートにアクセスしたときに、このServiceのClusterIPの、8080ポートにフォワードされることを意味します。<br>
+Serviceに到達すると、後はService Networkと同様の仕組みで、Podにルーティングされます。
+
+続いて、Endpointの一覧です。
 
     $ kubectl get endpoints                                                   
-    NAME         ENDPOINTS        AGE                                          
-    kubernetes   10.0.2.15:8443   1h                                           
-    my-nginx     172.17.0.4:80    29s                                          
+    NAME                ENDPOINTS                     AGE                                          
+    my-nginx            172.17.0.4:80,172.17.0.5:80   1m
+    my-nginx-headless   172.17.0.4:80,172.17.0.5:80   1m
+    my-nginx-nodeport   172.17.0.4:80,172.17.0.5:80   1m
 
-    $ kubectl get pods                                                        
-    NAME                       READY     STATUS    RESTARTS   AGE              
-    my-nginx-9d5677d94-9tzsh   1/1       Running   0          58m              
+### Serviceへのアクセスの確認
+それではこのServiceによって公開された、Node/Portに実際にアクセスしてみます。
+先にメモしておいたNodeのIPアドレスと、公開されているPort番号（この例の場合30774）を指定して、以下のようにコマンドを実行してください。
 
-    $ kubectl get pod my-nginx-9d5677d94-9tzsh -o 'jsonpath={.status.hostIP}' 
-    192.168.99.100                                                             
+##### Mac/Linux
 
-    $ curl 192.168.99.100:32461                                               
+    $ curl 192.168.99.100:30774
 
+##### Windows
+（レスポンスボディを直接コンソールに表示できないので、一度ファイルに保存してからその内容を表示しています）
 
-### Ingress
-        Nginxの実態がどこにあるかも確認しておく
-            Ingressの参照先。Podの実態
+    $ Invoke-RestMethod -Uri "http://192.168.99.100:30774/" -o my-nginx-content.html
+    $ cat ./my-nginx-content.html
 
-3-1. IngressとNGINX Ingress Controllerのデプロイ
-Ingressを使うと、外部アクセスのロードバランシングやSSL/TLSの終端といった、Webフロントの機能を、クラスター内に構成することができます（IngressはKubernetes 1.8の時点ではBetaの機能です。現時点では、クラスター外にLBを構成する方法が主流となっています）。
-
-Ingressオブジェクトは、Webフロントとしての構成情報を設定するオブジェクトで、実際の機能を担う実態は、別途ReplicationControllerとしてデプロイする必要があります。 今回はNGINXを利用した、NGiNX Ingress Controllerを使います。
-
-まずはじめに、外部からのリクエストに対してルーティング先が見つからなかったときのレスポンスを返すものとして、デフォルトのバックエンドを構成しておきます。
-
-> kubectl create -f deployment/web-default-backend.yaml
-replicationcontroller "default-http-backend" created
-
-> kubectl expose rc default-http-backend --port=80 --target-port=8080 --name=default-http-backend
-service "default-http-backend" exposed
-今回のNGINX Ingress Controllerのmanifestでは、role=frontというLabelのついたNodeにデプロイされるように設定しています。以下のようにNodeにLabelを設定して、デプロイ先のNodeが固定されるようにします。
-
-> kubectl label nodes 172.17.8.102 role=front
-NGINX Ingress Controllerをデプロイします。
-
-> kubectl create -f deployment/web-rc-default.yaml
-replicationcontroller "nginx-ingress-controller" created
-最後にIngressオブジェクトを構成します。
-
-> kubectl create -f deployment/web-ingress.yaml
+クラスター外から、サンプルPodにアクセスして、応答を得ることができました。
 
 
+5 . クラスター外への公開 - (2)
+------------------------------
+ここでは、クラスター外からのアクセスを受け入れるもう一つの手段として、Ingressを試します。
+
+Serviceオブジェクトは、L3/4相当のロードバランシングの機能を提供しますが、Ingressを利用すると、L7ロードバランシングやTLS/SSLの終端等が行えます。
+
+### IngressとNGINX Ingress Controllerのデプロイ
+Ingressオブジェクトは、Webフロントとしての設定情報を保持するオブジェクトで、実際の機能を担う実態は、別途ReplicationControllerとしてデプロイする必要があります。<br>
+今回は[NGiNX Ingress Controller](https://github.com/kubernetes/ingress-nginx)を利用します。これを使うと、クラスター内にnginxのPodを立ち上げて、それをロードバランサとして利用するように動きます。
+
+まずはじめに、外部からのリクエストに対してルーティング先が見つからなかったときのフォールバック先として、デフォルトのバックエンドを構成しておきます。
+
+    $ kubectl create -f ./manifests/web-default-backend.yaml
+    replicationcontroller "default-http-backend" created
+
+ReplicationContrllerが、フォールバック先の実態となるPodを立ち上げてくれています。
+
+    $ kubectl get pods
+    NAME                         READY     STATUS    RESTARTS   AGE
+    default-http-backend-8ktdr   1/1       Running   0          1m
+    my-nginx-9d5677d94-4jpsh     1/1       Running   0          1h
+    my-nginx-9d5677d94-648cx     1/1       Running   0          1h
+
+これだけではフォールバック先にアクセスできないので、Serviceを構成してクラスター内に公開しておきます。
+
+    $ kubectl expose replicationcontroller default-http-backend --port=80 --target-port=8080 --name=default-http-backend
+    service "default-http-backend" exposed
+
+次にNGINX Ingress Controllerをデプロイします。
+
+    $ kubectl create -f ./manifests/nginx-ingress-controller.yaml
+    replicationcontroller "nginx-ingress-controller" created
+
+デフォルト・バックエンドと同じように、Ingress ControllerのPodも立ち上がります。
+
+    $ kubectl get pods
+    NAME                             READY     STATUS    RESTARTS   AGE
+    default-http-backend-8ktdr       1/1       Running   0          17m
+    my-nginx-9d5677d94-4jpsh         1/1       Running   0          1h
+    my-nginx-9d5677d94-648cx         1/1       Running   0          1h
+    nginx-ingress-controller-gm8xv   1/1       Running   0          46s
+
+最後に、Ingressオブジェクトを構成して、Ingress Controllerを公開します。Ingressオブジェクトのmanifestには、Ingress Controllerに適用する設定情報（ルーティング・ルール等）を記述しておきます。<br>
+今回の例では、manifestの内容は以下のようになっています。
+
+    $ cat ./manifests/my-nginx-ingress.yaml
+    apiVersion: extensions/v1beta1          
+    kind: Ingress                           
+    metadata:                               
+      name: my-nginx-ingress                
+      annotations:                          
+        kubernetes.io/ingress.class: "nginx"
+    spec:                                   
+      rules:                                
+      - http:                               
+          paths:                            
+          - path: /                         
+            backend:                        
+              serviceName: my-nginx         
+              servicePort: 80                
+
+``{.metadata.annotations}``には、ロードバランサの実態として利用するIngress Controllerを指定します。上記の例のように書くとNGiNX Ingress Cotrollerが利用されます。
+
+``{.spec}``配下はルーティングのルールを記述しています。この例では、全てのホスト、パスに対するリクエストが、Serviceオブジェクト"my-nginx"の80ポートにルーティングされます。<br>
+このようなルールは複数記述することが、ホストのドメイン名のパターンや、パスのパターン毎に異なるServiceにルーティングするよう設定することも可能です。
+
+最後に、Ingressオブジェクトをデプロイします。
+
+    $ kubectl create -f ./manifests/my-nginx-ingress.yaml
+
+### Ingressへのアクセスの確認
+NGiNX Ingress ControllerのPodが可動しているホストを調べるため、以下のコマンドを実行します。
+
+    $ kubectl get pods -l name=nginx-ingress-lb -o 'jsonpath={.items[0].status.hostIP}'
+    192.168.99.100
+
+NGiNX Ingress Cotrollerはデフォルトで80番ポート(http)へのアクセスを443番ポート(https)にリダイレクトします。また、443番ポートは自己署名証明書でSSL/TLSが構成されています。
+
+curlを使ってアクセスを確認することもできますが、ここではブラウザで動作を見てみます。以下のURLにアクセスしてみてください（IPアドレスは上で取得したものを指定）。
+
+    http://192.168.99.100/
+
+httpsスキームのURLにリダイレクトされた後、信頼できない証明書が利用されている旨の警告画面が表示されます。さらにアクセスを続行すると、nginxのWelcome画面が表示されます（これは"my-nginx"としてデプロイしたサンプルPodが返しています）。
 
 
-以上で、ハンズオンのPart1は終了です。
+6 . クリーンアップ
+------------------------------
+お疲れ様でした。以上でハンズオンのPart1は終了です。
 
-Part2へのリンク
+これまで作ってきたオブジェクトをクリーンアップしたい場合は、以下のコマンドを実行して、Namespaceごと削除を行ってください。Part2は比較的リソースを多く消費するため、特にminikubeを使っている場合は削除しておくことをおすすめします。
 
-
-
-
-
----
-
-ハンズオンチュートリアルのPart2では環境の設定に一定の条件がありますので、もしKubernetesクラスターをまだ起動していないのであれば、先に
+    $ kubectl delete namespace k8snet
 
 
-
-
-
-
-
-Part2ではRole Based Access Control(RBAC)が有効になっているKubernetesクラスターを利用しますので、
-
-
-    > kubectl run -i --tty --image busybox dns-test --restart=Never --rm /bin/sh
-
+以上。
