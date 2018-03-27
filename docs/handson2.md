@@ -62,6 +62,7 @@ Part2では、KubernetesクラスターのRole Based Access Controll(RBAC)が有
 
 1 . Istioのインストール
 -----------------------
+KubernetesにIstioをインストールします。
 
 ### 1-1. Istioのダウンロードとistioctlのセットアップ
 Istioの最新版をダウンロードします。
@@ -123,17 +124,17 @@ IstioをKubernetesクラスターにインストールします。必要なも�
 
 istio-systemというNamespace配下に必要な構成要素が配備されます。ServiceとPodにどのようなオブジェクトが配備されるか、確認してみてください。
 
-・Service
+##### Service
 
-    > kubectl get services -n istio-system
+    $ kubectl get services -n istio-system
     NAME            TYPE           CLUSTER-IP       EXTERNAL-IP   PORT(S)                                                            AGE
     istio-ingress   LoadBalancer   10.100.151.26    <pending>     80:31826/TCP,443:31716/TCP                                         1m
     istio-mixer     ClusterIP      10.100.149.13    <none>        9091/TCP,15004/TCP,9093/TCP,9094/TCP,9102/TCP,9125/UDP,42422/TCP   1m
     istio-pilot     ClusterIP      10.100.118.141   <none>        15003/TCP,8080/TCP,9093/TCP,443/TCP                                1m
 
-・Pod
+##### Pod
 
-    > kubectl get pods -n istio-system
+    $ kubectl get pods -n istio-system
     NAME                             READY     STATUS    RESTARTS   AGE
     istio-ca-418645489-gg8sh         1/1       Running   0          2m
     istio-ingress-1688831668-t24gh   1/1       Running   0          2m
@@ -145,56 +146,83 @@ istio-systemというNamespace配下に必要な構成要素が配備されま�
 
 2 . サンプルアプリケーションを配備する
 --------------------------------------
+このチュートリアルでは、サンプルアプリケーションとして、kubernetes-bootcampアプリケーションを使います。複数のバージョンのbootcampアプリをデプロイして、後でおこなう、Istioによるトラフィック制御に利用します。
 
-
-### Namespaceを作成する
-最初に、Part2の作業を通して利用するNamespaceとして"istio-bootcamp"を作成しておきます。
+### 2.1. Namespaceを作成する
+以降のチュートリアルの手順で利用するNamespaceとして、"istio-bootcamp"を作成しておきます。
 
     $ kubectl create namespace istio-bootcamp
 
 kubectlのデフォルトnamespaceを"istio-bootcamp"に変更しておきます。
 
-・Mac/Linux
+##### Mac/Linux
 
     $ kubectl config set-context $(kubectl config current-context) --namespace=istio-bootcamp
 
-・Windows
+##### Windows
 
     $ $CURRENT_CONTEXT=kubectl config current-context
     $ kubectl config set-context $CURRENT_CONTEXT --namespace=istio-bootcamp
 
-### bootcamp アプリケーションのデプロイ
+### 2.2. bootcampアプリケーションのデプロイ
+現在は"istio-0.6.0"というディレクトリがカレントディレクトリになっていますので、これを"cndjp4/istio-bootcamp/"に戻します。
 
-    $ cd ./istio-bootcamp/manifests
+##### Mac/Linux
 
-    $ kubectl create -f ./bootcamp.yaml
-    $ kubectl create -f ./bootcamp-service.yaml
-    $ kubectl create -f ./bootcamp-ingress.yaml
+    $ cd ../
 
-    $ kubectl describe deployments bootcamp-v1
+##### Windwos
 
-アクセスするためのURLを確認する
+    $ cd ../../
 
-Linux/Mac
+続いて、bootcampアプリケーションをデプロイします。
 
-    > export GATEWAY_URL=$(kubectl get po -l istio=ingress -n istio-system -o 'jsonpath={.items[0].status.hostIP}'):$(kubectl get svc istio-ingress -n istio-system -o 'jsonpath={.spec.ports[0].nodePort}')
+    $ kubectl create -f ./manifests/bootcamp.yaml
 
-Windows
+version 1のPodが2つ、varsion 2のPodが1つデプロイされていることを確認してください。
 
-    > $GATEWAY_HOSTIP=kubectl get po -l istio=ingress -n istio-system -o 'jsonpath={.items[0].status.hostIP}'
-    > $GATEWAY_NODEPORT=kubectl get svc istio-ingress -n istio-system -o 'jsonpath={.spec.ports[0].nodePort}'
-    > $GATEWAY_URL="$GATEWAY_HOSTIP" + ":" + "$GATEWAY_NODEPORT"
+    $ kubectl get pods
 
-curlを実行
+次に、アプリケーションにクラスター外からアクセスするためのService、およびIngressオブジェクトを作成します。ここでは、Ingress CotrollerとしてIstioに付属のIstio Ingress Cotrollerを利用します。
+
+    $ kubectl create -f ./manifests/bootcamp-service.yaml
+
+    $ kubectl create -f ./manifests/bootcamp-ingress.yaml
+
+### 2.3. bootcampアプリケーションへのアクセスの確認
+Ingress Controllerが配備されているNodeと公開されているPort番号を取得して、アプリケーションにアクセスするためのURLを取得します。
+
+##### Linux/Mac
+
+    $ export GATEWAY_URL=$(kubectl get po -l istio=ingress -n istio-system -o 'jsonpath={.items[0].status.hostIP}'):$(kubectl get svc istio-ingress -n istio-system -o 'jsonpath={.spec.ports[0].nodePort}')
+    $ echo $GATEWAY_URL
+
+##### Windows
+
+    $ $GATEWAY_HOSTIP=kubectl get po -l istio=ingress -n istio-system -o 'jsonpath={.items[0].status.hostIP}'
+    $ $GATEWAY_NODEPORT=kubectl get svc istio-ingress -n istio-system -o 'jsonpath={.spec.ports[0].nodePort}'
+    $ $GATEWAY_URL="$GATEWAY_HOSTIP" + ":" + "$GATEWAY_NODEPORT"
+    $ echo $GATEWAY_URL
+
+取得したURLの末尾に"/bootcamp"を追加して、その宛先に対してリクエストを送信します。Pod名とアプリケーションのバージョン番号が返却されることを確認してください。
+
+##### Linux/Mac
 
     $ curl http://$GATEWAY_URL/bootcamp
 
+##### Windows
+
     $ Invoke-RestMethod -Uri "http://${GATEWAY_URL}/bootcamp"
 
+この時点では、トラフィックの制御を何も行っていないため、3つのPodに対して均等の割合でルーティングされます。リクエストの送信を繰り返し実行すると、おおよそ2/3がv1、1/3がv2からの応答となります。
+
+以上で、サンプルアプリケーションの配備は完了です。
 
 
+3 . Istioによるトラフィックの制御を行う
+---------------------------------------
 
-### Envoyを注入したPodに置き換える
+### 3.1. Envoyを注入したPodに置き換える
 
     $ kubectl delete -f ./bootcamp.yaml
 
