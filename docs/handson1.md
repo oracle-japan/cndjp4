@@ -72,11 +72,11 @@ Part2では、KubernetesクラスターのRole Based Access Controll(RBAC)が有
 
 kubectlのデフォルトnamespaceを"k8snet"に変更しておきます。
 
-・Mac/Linux
+##### Mac/Linux
 
     $ kubectl config set-context $(kubectl config current-context) --namespace=k8snet
 
-・Windows
+##### Windows
 
     $ $CURRENT_CONTEXT=kubectl config current-context
     $ kubectl config set-context $CURRENT_CONTEXT --namespace=k8snet
