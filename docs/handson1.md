@@ -354,7 +354,7 @@ ServiceオブジェクトでNodePortタイプを指定するには、``{.spec.ty
 
 以下のコマンドでNodePortタイプのServiceオブジェクトを作成します。
 
-    $ kubectl create -f ./manifests/my-nginx-service-nodePort.yaml｀：ｗ
+    $ kubectl create -f ./manifests/my-nginx-service-nodePort.yaml
     service "my-nginx-nodeport" created                                                 
 Serviceの一覧を表示してみます。
 
