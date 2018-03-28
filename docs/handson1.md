@@ -296,7 +296,7 @@ Headless ServiceはClusterIPに"None"を指定したSerivceオブジェクトで
 
 以下のコマンドでHeadless Serviceオブジェクトを作成します。
 
-    $ kubectl create -f ./manifests/my-nginx-service-headless.yml
+    $ kubectl create -f ./manifests/my-nginx-service-headless.yaml
     service "my-nginx-headless" created
 
 ServiceとEndpointsの一覧を取得すると、Headless ServiceにはClusterIPが割り当てられていないことがわかります。
