@@ -90,7 +90,7 @@ Istioのコマンドラインツール(istioctl)は、ダウンロードして�
     
 ##### Mac/Linux
 
-    $ export PATH=$PWD/istio-0.6/bin:$PATH
+    $ export PATH=$PWD/istio-0.6.0/bin:$PATH
 
 ##### Windows
 
